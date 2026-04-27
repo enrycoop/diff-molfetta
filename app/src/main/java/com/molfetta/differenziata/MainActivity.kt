@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -18,6 +19,8 @@ import java.time.format.TextStyle
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
+
+    data class DayItem(val dayOfWeek: DayOfWeek, val label: String)
 
     data class WasteInfo(
         val emoji: String,
@@ -57,23 +60,42 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        updateUI()
+        setupDropdown()
 
         binding.fabRefresh.setOnClickListener {
-            updateUI()
+            setupDropdown()
         }
     }
 
-    private fun updateUI() {
+    private fun setupDropdown() {
+        val dayItems = buildDayItems()
+        val labels = dayItems.map { it.label }
+        val adapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, labels)
+        binding.dropdownDay.setAdapter(adapter)
+
+        val todayIndex = LocalDate.now().dayOfWeek.value - 1
+        binding.dropdownDay.setText(labels[todayIndex], false)
+        updateUI(dayItems[todayIndex].dayOfWeek)
+
+        binding.dropdownDay.setOnItemClickListener { _, _, position, _ ->
+            updateUI(dayItems[position].dayOfWeek)
+        }
+    }
+
+    private fun buildDayItems(): List<DayItem> {
         val today = LocalDate.now()
-        val dayOfWeek = today.dayOfWeek
+        val monday = today.with(DayOfWeek.MONDAY)
+        val shortDateFmt = DateTimeFormatter.ofPattern("d MMM", Locale.ITALIAN)
+        return DayOfWeek.values().map { dow ->
+            val date = monday.plusDays(dow.value.toLong() - 1)
+            val dayName = dow.getDisplayName(TextStyle.FULL, Locale.ITALIAN)
+                .replaceFirstChar { it.uppercase() }
+            val marker = if (dow == today.dayOfWeek) " • oggi" else ""
+            DayItem(dow, "$dayName  ${date.format(shortDateFmt)}$marker")
+        }
+    }
 
-        val dayName = dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ITALIAN)
-            .replaceFirstChar { it.uppercase() }
-        val dateStr = today.format(DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.ITALIAN))
-
-        binding.tvDay.text = dayName
-        binding.tvDate.text = dateStr
+    private fun updateUI(dayOfWeek: DayOfWeek) {
         binding.wasteContainer.removeAllViews()
 
         val wasteItems = getWasteForDay(dayOfWeek)
