@@ -18,9 +18,8 @@ class NotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         createNotificationChannel(context)
 
-        // La notifica delle 20:30 riguarda la raccolta del giorno DOPO
-        val tomorrow = LocalDate.now().plusDays(1)
-        val wasteItems = WasteSchedule.getWasteForDay(tomorrow.dayOfWeek)
+        val today = LocalDate.now()
+        val wasteItems = WasteSchedule.getWasteForDay(today.dayOfWeek)
 
         if (wasteItems.isNotEmpty()) {
             val wasteText = wasteItems.joinToString(" + ") { "${it.emoji} ${it.title}" }
@@ -37,7 +36,7 @@ class NotificationReceiver : BroadcastReceiver() {
                 .setContentText(wasteText)
                 .setStyle(
                     NotificationCompat.BigTextStyle()
-                        .bigText("$wasteText\n\nEsponi i contenitori entro le 24:00 di stanotte.")
+                        .bigText("$wasteText\n\nRicordati di esporre i contenitori entro le 24:00.")
                 )
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setContentIntent(openIntent)
@@ -76,10 +75,6 @@ class NotificationReceiver : BroadcastReceiver() {
         fun scheduleNextAlarm(context: Context) {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-                return
-            }
-
             val pendingIntent = PendingIntent.getBroadcast(
                 context, 0,
                 Intent(context, NotificationReceiver::class.java),
@@ -96,9 +91,19 @@ class NotificationReceiver : BroadcastReceiver() {
                 }
             }
 
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP, target.timeInMillis, pendingIntent
-            )
+            val canUseExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                    || alarmManager.canScheduleExactAlarms()
+
+            if (canUseExact) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP, target.timeInMillis, pendingIntent
+                )
+            } else {
+                // Fallback senza permesso: inesatto ma comunque intorno alle 20:30
+                alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP, target.timeInMillis, pendingIntent
+                )
+            }
         }
     }
 }

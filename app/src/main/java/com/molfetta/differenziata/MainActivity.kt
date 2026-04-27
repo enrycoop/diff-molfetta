@@ -2,6 +2,7 @@ package com.molfetta.differenziata
 
 import android.Manifest
 import android.app.AlarmManager
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -19,7 +20,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import com.google.android.material.snackbar.Snackbar
 import com.molfetta.differenziata.databinding.ActivityMainBinding
 import com.molfetta.differenziata.databinding.ItemWasteBinding
 import java.time.DayOfWeek
@@ -150,6 +150,14 @@ class MainActivity : AppCompatActivity() {
 
     // ── Notifiche ─────────────────────────────────────────────────────────────
 
+    override fun onResume() {
+        super.onResume()
+        // Ripianifica dopo che l'utente torna dalle Impostazioni (permesso potrebbe essere stato concesso)
+        if (hasNotificationPermission()) {
+            NotificationReceiver.scheduleNextAlarm(this)
+        }
+    }
+
     private fun setupNotifications() {
         NotificationReceiver.createNotificationChannel(this)
 
@@ -165,23 +173,37 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun scheduleAlarm() {
+        // Schedula sempre (esatto se il permesso c'è, inesatto come fallback)
+        NotificationReceiver.scheduleNextAlarm(this)
+
+        // Mostra il dialog UNA VOLTA se il permesso exact-alarm manca (Android 12+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val alarmManager = getSystemService(AlarmManager::class.java)
             if (!alarmManager.canScheduleExactAlarms()) {
-                Snackbar.make(
-                    binding.root,
-                    "Consenti le sveglie precise per i promemoria serali",
-                    Snackbar.LENGTH_LONG
-                ).setAction("Impostazioni") {
-                    startActivity(
-                        Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
-                            data = Uri.parse("package:$packageName")
+                val prefs = getSharedPreferences("prefs", MODE_PRIVATE)
+                if (!prefs.getBoolean("exact_alarm_asked", false)) {
+                    prefs.edit().putBoolean("exact_alarm_asked", true).apply()
+                    AlertDialog.Builder(this)
+                        .setTitle("Promemoria serale")
+                        .setMessage("Per ricevere il promemoria esattamente alle 20:30, consenti le sveglie precise nelle impostazioni di sistema.")
+                        .setPositiveButton("Apri impostazioni") { _, _ ->
+                            startActivity(
+                                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                    data = Uri.parse("package:$packageName")
+                                }
+                            )
                         }
-                    )
-                }.show()
-                return
+                        .setNegativeButton("Non ora", null)
+                        .show()
+                }
             }
         }
-        NotificationReceiver.scheduleNextAlarm(this)
+    }
+
+    private fun hasNotificationPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                    PackageManager.PERMISSION_GRANTED
+        } else true
     }
 }
