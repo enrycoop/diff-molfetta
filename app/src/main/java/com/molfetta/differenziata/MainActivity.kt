@@ -1,15 +1,25 @@
 package com.molfetta.differenziata
 
+import android.Manifest
+import android.app.AlarmManager
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.android.material.snackbar.Snackbar
 import com.molfetta.differenziata.databinding.ActivityMainBinding
 import com.molfetta.differenziata.databinding.ItemWasteBinding
 import java.time.DayOfWeek
@@ -22,17 +32,13 @@ class MainActivity : AppCompatActivity() {
 
     data class DayItem(val dayOfWeek: DayOfWeek, val label: String)
 
-    data class WasteInfo(
-        val emoji: String,
-        val title: String,
-        val container: String,
-        val includes: String?,
-        val excludes: String?,
-        val colorHex: String,
-        val note: String? = null
-    )
-
     private lateinit var binding: ActivityMainBinding
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) scheduleAlarm()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,7 +48,6 @@ class MainActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setSupportActionBar(binding.toolbar)
 
-        // Sposta la toolbar sotto la fotocamera/status bar
         ViewCompat.setOnApplyWindowInsetsListener(binding.appBarLayout) { view, insets ->
             val top = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
@@ -51,7 +56,6 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        // Sposta il FAB sopra la barra di navigazione
         ViewCompat.setOnApplyWindowInsetsListener(binding.fabRefresh) { view, insets ->
             val navBar = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
             val params = view.layoutParams as ViewGroup.MarginLayoutParams
@@ -61,11 +65,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupDropdown()
+        setupNotifications()
 
-        binding.fabRefresh.setOnClickListener {
-            setupDropdown()
-        }
+        binding.fabRefresh.setOnClickListener { setupDropdown() }
     }
+
+    // ── Dropdown ─────────────────────────────────────────────────────────────
 
     private fun setupDropdown() {
         val dayItems = buildDayItems()
@@ -85,20 +90,20 @@ class MainActivity : AppCompatActivity() {
     private fun buildDayItems(): List<DayItem> {
         val today = LocalDate.now()
         val monday = today.with(DayOfWeek.MONDAY)
-        val shortDateFmt = DateTimeFormatter.ofPattern("d MMM", Locale.ITALIAN)
+        val fmt = DateTimeFormatter.ofPattern("d MMM", Locale.ITALIAN)
         return DayOfWeek.values().map { dow ->
             val date = monday.plusDays(dow.value.toLong() - 1)
             val dayName = dow.getDisplayName(TextStyle.FULL, Locale.ITALIAN)
                 .replaceFirstChar { it.uppercase() }
             val marker = if (dow == today.dayOfWeek) " • oggi" else ""
-            DayItem(dow, "$dayName  ${date.format(shortDateFmt)}$marker")
+            DayItem(dow, "$dayName  ${date.format(fmt)}$marker")
         }
     }
 
     private fun updateUI(dayOfWeek: DayOfWeek) {
         binding.wasteContainer.removeAllViews()
 
-        val wasteItems = getWasteForDay(dayOfWeek)
+        val wasteItems = WasteSchedule.getWasteForDay(dayOfWeek)
 
         if (wasteItems.isEmpty()) {
             binding.cardNoCollection.visibility = View.VISIBLE
@@ -143,76 +148,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun getWasteForDay(day: DayOfWeek): List<WasteInfo> = when (day) {
-        DayOfWeek.MONDAY -> listOf(
-            WasteInfo(
-                emoji = "⚫",
-                title = "INDIFFERENZIATO",
-                container = "Mastello / carrellato grigio",
-                includes = "Pannolini, pannoloni, assorbenti, stracci, spugne, spazzolini, oggetti di gomma, posate monouso, cicche di sigarette, carta plastificata, carta forno, cocci di ceramica, porcellana e terracotta",
-                excludes = "Tutto ciò che è separabile/riciclabile, rifiuti urbani pericolosi, ingombranti",
-                colorHex = "#757575"
-            )
-        )
-        DayOfWeek.TUESDAY -> listOf(
-            WasteInfo(
-                emoji = "🟤",
-                title = "ORGANICO",
-                container = "Mastello / carrellato marrone",
-                includes = "Scarti di cucina, avanzi di cibo e frutta, alimenti avariati, tovaglioli di carta unti, ceneri spente, piccole potature di fiori, piante, sfalci d'erbe, foglie",
-                excludes = "Pannolini, pannoloni, assorbenti, stracci, spugne, gomme da masticare, cicche di sigarette",
-                colorHex = "#795548"
-            ),
-            WasteInfo(
-                emoji = "🟢",
-                title = "VETRO",
-                container = "Mastello / carrellato verde",
-                includes = null,
-                excludes = null,
-                colorHex = "#388E3C"
-            )
-        )
-        DayOfWeek.WEDNESDAY -> listOf(
-            WasteInfo(
-                emoji = "🔵",
-                title = "CARTA, CARTONE e TETRA PAK",
-                container = "Mastello / carrellato blu",
-                includes = "Giornali, riviste, imballaggi di carta e cartoncino, fotocopie e fogli vari, confezioni Tetra Pak (brik latte, vino, succhi di frutta, ecc.)",
-                excludes = "Carta plastificata, carta forno, ogni tipo di carta/cartone sporcato con vernici o altri prodotti simili",
-                colorHex = "#1565C0",
-                note = "⚠️  Il Tetra Pak va nella CARTA, non nella plastica!"
-            )
-        )
-        DayOfWeek.THURSDAY -> listOf(
-            WasteInfo(
-                emoji = "🟤",
-                title = "ORGANICO",
-                container = "Mastello / carrellato marrone",
-                includes = "Scarti di cucina, avanzi di cibo e frutta, alimenti avariati, tovaglioli di carta unti, cenere spenta, piccole potature di fiori, piante, sfalci d'erbe, foglie",
-                excludes = "Pannolini, pannoloni, assorbenti, stracci, spugne, gomme da masticare, cicche di sigarette",
-                colorHex = "#795548"
-            )
-        )
-        DayOfWeek.FRIDAY -> listOf(
-            WasteInfo(
-                emoji = "🟡",
-                title = "PLASTICA e METALLI",
-                container = "Sacchi / carrellato gialli",
-                includes = "Bottiglie, flaconi per detersivi, piatti e bicchieri monouso, buste, vaschette, pellicole (PLASTICA) — Scatolame, lattine, fogli di alluminio, bombolette spray non T/F, tubetti (METALLI)",
-                excludes = "Giocattoli, oggetti di gomma, tubi di plastica e metallo, penne",
-                colorHex = "#F9A825"
-            )
-        )
-        DayOfWeek.SATURDAY -> emptyList()
-        DayOfWeek.SUNDAY -> listOf(
-            WasteInfo(
-                emoji = "🟤",
-                title = "ORGANICO",
-                container = "Mastello / carrellato marrone",
-                includes = "Scarti di cucina, avanzi di cibo e frutta, alimenti avariati, tovaglioli di carta unti, cenere spenta, piccole potature di fiori, piante, sfalci d'erbe, foglie",
-                excludes = "Pannolini, pannoloni, assorbenti, stracci, spugne, gomme da masticare, cicche di sigarette",
-                colorHex = "#795548"
-            )
-        )
+    // ── Notifiche ─────────────────────────────────────────────────────────────
+
+    private fun setupNotifications() {
+        NotificationReceiver.createNotificationChannel(this)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            when {
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                        == PackageManager.PERMISSION_GRANTED -> scheduleAlarm()
+                else -> notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        } else {
+            scheduleAlarm()
+        }
+    }
+
+    private fun scheduleAlarm() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = getSystemService(AlarmManager::class.java)
+            if (!alarmManager.canScheduleExactAlarms()) {
+                Snackbar.make(
+                    binding.root,
+                    "Consenti le sveglie precise per i promemoria serali",
+                    Snackbar.LENGTH_LONG
+                ).setAction("Impostazioni") {
+                    startActivity(
+                        Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                            data = Uri.parse("package:$packageName")
+                        }
+                    )
+                }.show()
+                return
+            }
+        }
+        NotificationReceiver.scheduleNextAlarm(this)
     }
 }
